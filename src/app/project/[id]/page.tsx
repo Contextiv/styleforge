@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 
@@ -15,6 +15,28 @@ type ProjectInfo = {
 };
 type ImageMeta = { id: number; filename: string; caption: string };
 
+// Animated status steps for long operations
+function StatusSteps({ steps, activeIndex }: { steps: string[]; activeIndex: number }) {
+  return (
+    <div className="space-y-2">
+      {steps.map((step, i) => (
+        <div key={i} className="flex items-center gap-3">
+          {i < activeIndex ? (
+            <span className="text-green-400 text-sm w-5 text-center">&#10003;</span>
+          ) : i === activeIndex ? (
+            <div className="w-4 h-4 border-2 border-[#68899D]/30 border-t-[#A9DFFF] rounded-full animate-spin ml-0.5"></div>
+          ) : (
+            <span className="w-5 text-center text-[#68899D]/30 text-sm">&#9679;</span>
+          )}
+          <span className={`text-sm ${i < activeIndex ? "text-green-400" : i === activeIndex ? "text-[#A9DFFF]" : "text-[#68899D]/40"}`}>
+            {step}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ProjectPage() {
   const params = useParams();
   const projectId = params.id as string;
@@ -26,10 +48,13 @@ export default function ProjectPage() {
   // Upload state
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState("");
+  const [uploadStep, setUploadStep] = useState(0);
 
   // Generate state
   const [prompt, setPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [generateStep, setGenerateStep] = useState(0);
+  const generateTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [result, setResult] = useState<{
     imageUrl: string | null;
     enhancedPrompt: string;
@@ -39,6 +64,8 @@ export default function ProjectPage() {
 
   // Training state
   const [training, setTraining] = useState(false);
+  const [trainInitStep, setTrainInitStep] = useState(0);
+  const trainTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [trainingStatus, setTrainingStatus] = useState<string | null>(null);
   const [trainingLogs, setTrainingLogs] = useState("");
 
@@ -94,7 +121,8 @@ export default function ProjectPage() {
     if (!files || files.length === 0) return;
 
     setUploading(true);
-    setUploadStatus(`Uploading ${files.length} file(s)...`);
+    setUploadStep(0);
+    setUploadStatus("");
 
     const formData = new FormData();
     formData.append("project_id", projectId);
@@ -109,18 +137,14 @@ export default function ProjectPage() {
       });
       const data = await res.json();
       if (data.success) {
-        setUploadStatus(
-          `Uploaded ${data.uploaded} file(s). Captioning with AI...`
-        );
-        // Trigger captioning
+        setUploadStep(1);
         const captionRes = await fetch(`/api/projects/${projectId}/caption`, {
           method: "POST",
         });
         const captionData = await captionRes.json();
         if (captionData.success) {
-          setUploadStatus(
-            `Done! ${captionData.captioned} images captioned.`
-          );
+          setUploadStep(2);
+          setUploadStatus(`${captionData.captioned} image(s) uploaded and captioned.`);
           loadProject();
         } else {
           setUploadStatus("Upload succeeded but captioning failed.");
@@ -138,18 +162,28 @@ export default function ProjectPage() {
 
   async function handleTrain() {
     setTraining(true);
+    setTrainInitStep(0);
     setUploadStatus("");
+
+    // Animate through steps while the API call runs
+    trainTimerRef.current = setInterval(() => {
+      setTrainInitStep((prev) => Math.min(prev + 1, 2));
+    }, 3000);
+
     try {
       const res = await fetch(`/api/projects/${projectId}/train`, {
         method: "POST",
       });
       const data = await res.json();
+      if (trainTimerRef.current) clearInterval(trainTimerRef.current);
       if (data.success) {
+        setTrainInitStep(3);
         setTrainingStatus("training");
       } else {
         setUploadStatus(data.error || "Training failed to start.");
       }
     } catch {
+      if (trainTimerRef.current) clearInterval(trainTimerRef.current);
       setUploadStatus("Something went wrong starting training.");
     } finally {
       setTraining(false);
@@ -159,8 +193,14 @@ export default function ProjectPage() {
   async function handleGenerate() {
     if (!prompt.trim()) return;
     setGenerating(true);
+    setGenerateStep(0);
     setError("");
     setResult(null);
+
+    // Animate through steps while the API call runs
+    generateTimerRef.current = setInterval(() => {
+      setGenerateStep((prev) => Math.min(prev + 1, 2));
+    }, 4000);
 
     try {
       const res = await fetch("/api/generate", {
@@ -169,6 +209,7 @@ export default function ProjectPage() {
         body: JSON.stringify({ prompt, project_id: projectId }),
       });
       const data = await res.json();
+      if (generateTimerRef.current) clearInterval(generateTimerRef.current);
       if (data.success) {
         setResult({
           imageUrl: data.imageUrl,
@@ -179,6 +220,7 @@ export default function ProjectPage() {
         setError("Generation failed. Please try again.");
       }
     } catch {
+      if (generateTimerRef.current) clearInterval(generateTimerRef.current);
       setError("Something went wrong.");
     } finally {
       setGenerating(false);
@@ -263,18 +305,36 @@ export default function ProjectPage() {
                   className="hidden"
                   disabled={uploading}
                 />
-                <div className="text-[#68899D]">
-                  <p className="text-lg mb-1">
-                    {uploading
-                      ? uploadStatus
-                      : "Drop reference images here or click to upload"}
-                  </p>
-                  <p className="text-sm text-[#68899D]/50">
-                    JPG, PNG, or WebP — each image will be analyzed by AI
-                  </p>
-                </div>
+                {!uploading ? (
+                  <div className="text-[#68899D]">
+                    <p className="text-lg mb-1">
+                      Drop reference images here or click to upload
+                    </p>
+                    <p className="text-sm text-[#68899D]/50">
+                      JPG, PNG, or WebP — each image will be analyzed by AI
+                    </p>
+                  </div>
+                ) : (
+                  <div className="text-left inline-block">
+                    <StatusSteps
+                      steps={[
+                        "Uploading images to Databricks...",
+                        "Analyzing images with AI...",
+                        "Upload complete",
+                      ]}
+                      activeIndex={uploadStep}
+                    />
+                  </div>
+                )}
               </label>
             </div>
+
+            {/* Upload/Training status message */}
+            {uploadStatus && !uploading && (
+              <div className="mb-6 px-4 py-3 bg-[#1a1a1a] border border-[#68899D]/20 rounded-lg text-sm text-[#A9DFFF]">
+                {uploadStatus}
+              </div>
+            )}
 
             {/* Image Grid */}
             {images.length === 0 ? (
@@ -304,18 +364,31 @@ export default function ProjectPage() {
                   Model Training
                 </h3>
 
-                {!trainingStatus && (
+                {!trainingStatus && !training && (
                   <div>
                     <p className="text-[#68899D] text-sm mb-4">
                       Train a custom LoRA model on your reference images. This takes 15-30 minutes.
                     </p>
                     <button
                       onClick={handleTrain}
-                      disabled={training}
-                      className="px-5 py-2.5 bg-[#A9DFFF] text-[#141414] hover:bg-[#A9DFFF]/80 disabled:bg-[#68899D]/20 disabled:text-[#68899D]/50 rounded-lg font-medium transition-colors text-sm"
+                      className="px-5 py-2.5 bg-[#A9DFFF] text-[#141414] hover:bg-[#A9DFFF]/80 rounded-lg font-medium transition-colors text-sm"
                     >
-                      {training ? "Starting Training..." : "Train Model"}
+                      Train Model
                     </button>
+                  </div>
+                )}
+
+                {!trainingStatus && training && (
+                  <div>
+                    <p className="text-[#68899D] text-sm mb-4">Preparing your training data...</p>
+                    <StatusSteps
+                      steps={[
+                        "Downloading images from Databricks...",
+                        "Packaging images and captions...",
+                        "Uploading to Replicate and starting training...",
+                      ]}
+                      activeIndex={trainInitStep}
+                    />
                   </div>
                 )}
 
@@ -420,11 +493,18 @@ export default function ProjectPage() {
                 )}
 
                 {generating && (
-                  <div className="text-center py-16">
-                    <div className="inline-block w-10 h-10 border-4 border-[#68899D]/30 border-t-[#A9DFFF] rounded-full animate-spin mb-4"></div>
-                    <p className="text-[#68899D]">
-                      Enhancing prompt. Matching references. Generating.
-                    </p>
+                  <div className="py-12 flex justify-center">
+                    <div className="bg-[#1a1a1a] border border-[#68899D]/20 rounded-lg p-6">
+                      <StatusSteps
+                        steps={[
+                          "Enhancing your prompt with artistic details...",
+                          "Finding matching reference images...",
+                          "Generating image with AI...",
+                        ]}
+                        activeIndex={generateStep}
+                      />
+                      <p className="text-[#68899D]/50 text-xs mt-4">This usually takes 15-30 seconds</p>
+                    </div>
                   </div>
                 )}
 
