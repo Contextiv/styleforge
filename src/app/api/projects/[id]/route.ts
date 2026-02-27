@@ -27,8 +27,8 @@ export async function GET(
     const { id } = await params;
 
     const projectResult = await databricksSQL(`
-      SELECT project_id, name, description 
-      FROM styleforge.data.projects 
+      SELECT project_id, name, description, replicate_model, replicate_version, training_status, replicate_training_id
+      FROM styleforge.data.projects
       WHERE project_id = '${id}'
     `);
 
@@ -60,6 +60,10 @@ export async function GET(
         project_id: projectRow[0],
         name: projectRow[1],
         description: projectRow[2],
+        replicate_model: projectRow[3] || null,
+        replicate_version: projectRow[4] || null,
+        training_status: projectRow[5] || null,
+        replicate_training_id: projectRow[6] || null,
       },
       images,
     });
