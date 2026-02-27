@@ -77,7 +77,31 @@ if (project_id) {
 
     const styledPrompt = `STYLFRG ${enhancedPrompt}. Artistic style reference: ${styleDescriptions}. Match this illustrative style closely — use similar color palettes, brushwork, textures, and compositional approach.`;
 
-    // Step 4: Generate image using Replicate
+    // Step 4: Check if project has a custom-trained model
+    const DEFAULT_VERSION = "6cf56a65fbcb6780fbf892befe53af18edb2c9ad0213e8eaaf4b78ebd7cc25f8";
+    let modelVersion = DEFAULT_VERSION;
+
+    if (project_id) {
+      const projectRes = await fetch(`${databricksHost}/api/2.0/sql/statements`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${databricksToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          statement: `SELECT replicate_version FROM styleforge.data.projects WHERE project_id = '${project_id}'`,
+          warehouse_id: "7cb6d88dbcea8491",
+          wait_timeout: "30s",
+        }),
+      });
+      const projectResult = await projectRes.json();
+      const projectVersion = projectResult.result?.data_array?.[0]?.[0];
+      if (projectVersion) {
+        modelVersion = projectVersion;
+      }
+    }
+
+    // Step 5: Generate image using Replicate
     const replicateResponse = await fetch(
       "https://api.replicate.com/v1/predictions",
       {
@@ -88,8 +112,7 @@ if (project_id) {
           Prefer: "wait",
         },
         body: JSON.stringify({
-          version:
-            "6cf56a65fbcb6780fbf892befe53af18edb2c9ad0213e8eaaf4b78ebd7cc25f8",
+          version: modelVersion,
           input: {
             prompt: styledPrompt,
             num_outputs: 1,

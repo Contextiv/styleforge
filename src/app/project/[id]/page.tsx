@@ -4,7 +4,15 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 
 type StyleRef = { filename: string; caption: string };
-type ProjectInfo = { project_id: string; name: string; description: string };
+type ProjectInfo = {
+  project_id: string;
+  name: string;
+  description: string;
+  replicate_model: string | null;
+  replicate_version: string | null;
+  training_status: string | null;
+  replicate_training_id: string | null;
+};
 type ImageMeta = { id: number; filename: string; caption: string };
 
 export default function ProjectPage() {
@@ -29,6 +37,11 @@ export default function ProjectPage() {
   } | null>(null);
   const [error, setError] = useState("");
 
+  // Training state
+  const [training, setTraining] = useState(false);
+  const [trainingStatus, setTrainingStatus] = useState<string | null>(null);
+  const [trainingLogs, setTrainingLogs] = useState("");
+
   // Active tab
   const [tab, setTab] = useState<"references" | "generate">("references");
 
@@ -39,6 +52,7 @@ export default function ProjectPage() {
       if (data.success) {
         setProject(data.project);
         setImages(data.images);
+        setTrainingStatus(data.project.training_status);
       }
     } catch {
       console.error("Failed to load project");
@@ -50,6 +64,30 @@ export default function ProjectPage() {
   useEffect(() => {
     loadProject();
   }, [loadProject]);
+
+  // Poll training status every 10 seconds when training is in progress
+  useEffect(() => {
+    if (trainingStatus !== "training") return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/training-status`);
+        const data = await res.json();
+        if (data.success) {
+          setTrainingStatus(data.status);
+          if (data.logs) setTrainingLogs(data.logs);
+          if (data.status === "completed" || data.status === "failed") {
+            clearInterval(interval);
+            loadProject();
+          }
+        }
+      } catch {
+        console.error("Failed to check training status");
+      }
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [trainingStatus, projectId, loadProject]);
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
@@ -95,6 +133,26 @@ export default function ProjectPage() {
     } finally {
       setUploading(false);
       e.target.value = "";
+    }
+  }
+
+  async function handleTrain() {
+    setTraining(true);
+    setUploadStatus("");
+    try {
+      const res = await fetch(`/api/projects/${projectId}/train`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTrainingStatus("training");
+      } else {
+        setUploadStatus(data.error || "Training failed to start.");
+      }
+    } catch {
+      setUploadStatus("Something went wrong starting training.");
+    } finally {
+      setTraining(false);
     }
   }
 
@@ -238,12 +296,84 @@ export default function ProjectPage() {
                 ))}
               </div>
             )}
+
+            {/* Training Section */}
+            {images.length > 0 && images.some(img => img.caption !== "Pending captioning...") && (
+              <div className="mt-8 bg-[#1a1a1a] border border-[#68899D]/20 rounded-lg p-6">
+                <h3 className="text-xs font-medium text-[#A9DFFF] mb-3 uppercase tracking-wider">
+                  Model Training
+                </h3>
+
+                {!trainingStatus && (
+                  <div>
+                    <p className="text-[#68899D] text-sm mb-4">
+                      Train a custom LoRA model on your reference images. This takes 15-30 minutes.
+                    </p>
+                    <button
+                      onClick={handleTrain}
+                      disabled={training}
+                      className="px-5 py-2.5 bg-[#A9DFFF] text-[#141414] hover:bg-[#A9DFFF]/80 disabled:bg-[#68899D]/20 disabled:text-[#68899D]/50 rounded-lg font-medium transition-colors text-sm"
+                    >
+                      {training ? "Starting Training..." : "Train Model"}
+                    </button>
+                  </div>
+                )}
+
+                {trainingStatus === "training" && (
+                  <div>
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-5 h-5 border-2 border-[#68899D]/30 border-t-[#A9DFFF] rounded-full animate-spin"></div>
+                      <p className="text-[#A9DFFF] text-sm font-medium">Training in progress...</p>
+                    </div>
+                    <p className="text-[#68899D] text-xs">This usually takes 15-30 minutes. You can leave this page and come back.</p>
+                    {trainingLogs && (
+                      <pre className="mt-3 text-xs text-[#68899D]/70 bg-[#141414] rounded p-3 overflow-x-auto">
+                        {trainingLogs}
+                      </pre>
+                    )}
+                  </div>
+                )}
+
+                {trainingStatus === "completed" && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-green-400 text-lg">&#10003;</span>
+                    <p className="text-green-400 text-sm font-medium">
+                      Model trained successfully! Generate images using your custom style.
+                    </p>
+                  </div>
+                )}
+
+                {trainingStatus === "failed" && (
+                  <div>
+                    <p className="text-[#FF50AD] text-sm mb-3">Training failed. You can try again.</p>
+                    <button
+                      onClick={handleTrain}
+                      disabled={training}
+                      className="px-5 py-2.5 bg-[#FF50AD] hover:bg-[#FF88A1] disabled:bg-[#68899D]/20 rounded-lg font-medium transition-colors text-sm"
+                    >
+                      {training ? "Starting..." : "Retry Training"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
         {/* Generate Tab */}
         {tab === "generate" && (
           <div>
+            {/* Model indicator */}
+            {project.replicate_version ? (
+              <div className="mb-4 px-3 py-2 bg-green-400/10 border border-green-400/20 rounded-lg text-green-400 text-xs">
+                Using your custom-trained model
+              </div>
+            ) : (
+              <div className="mb-4 px-3 py-2 bg-[#68899D]/10 border border-[#68899D]/20 rounded-lg text-[#68899D] text-xs">
+                Using default model — train a custom model in the References tab for better results
+              </div>
+            )}
+
             {images.length === 0 ? (
               <div className="text-center py-16">
                 <p className="text-[#68899D] mb-4">
