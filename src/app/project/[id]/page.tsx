@@ -13,7 +13,7 @@ type ProjectInfo = {
   training_status: string | null;
   replicate_training_id: string | null;
 };
-type ImageMeta = { id: number; filename: string; caption: string };
+type ImageMeta = { id: number; filename: string; caption: string; file_path: string | null };
 
 // Animated status steps for long operations
 function StatusSteps({ steps, activeIndex }: { steps: string[]; activeIndex: number }) {
@@ -343,17 +343,56 @@ export default function ProjectPage() {
               </p>
             ) : (
               <div className="space-y-3">
-                {images.map((img) => (
-                  <div
-                    key={img.id}
-                    className="bg-[#1a1a1a] border border-[#68899D]/20 rounded-lg p-4"
-                  >
-                    <p className="text-[#FF50AD] text-sm font-medium mb-1">
-                      {img.filename}
-                    </p>
-                    <p className="text-[#68899D] text-sm">{img.caption}</p>
-                  </div>
-                ))}
+                {images.map((img) => {
+                  const ext = img.filename.split(".").pop()?.toLowerCase() || "";
+                  const isImage = ["jpg", "jpeg", "png", "webp", "gif"].includes(ext);
+
+                  return (
+                    <div
+                      key={img.id}
+                      className="bg-[#1a1a1a] border border-[#68899D]/20 rounded-lg p-4 flex gap-4"
+                    >
+                      {/* Thumbnail or file icon */}
+                      <div className="w-16 h-16 flex-shrink-0 rounded-md overflow-hidden bg-[#141414] flex items-center justify-center">
+                        {isImage ? (
+                          <img
+                            src={`/api/projects/${projectId}/thumbnail?filename=${encodeURIComponent(img.filename)}${img.file_path ? `&path=${encodeURIComponent(img.file_path)}` : ""}`}
+                            alt={img.filename}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <svg
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            className="w-8 h-8 text-[#68899D]/50"
+                          >
+                            <path
+                              d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                            <path
+                              d="M14 2v6h6M16 13H8M16 17H8M10 9H8"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        )}
+                      </div>
+                      {/* Filename + caption */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[#FF50AD] text-sm font-medium mb-1">
+                          {img.filename}
+                        </p>
+                        <p className="text-[#68899D] text-sm">{img.caption}</p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
 

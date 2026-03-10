@@ -41,8 +41,8 @@ export async function GET(
     }
 
     const imagesResult = await databricksSQL(`
-      SELECT id, filename, caption 
-      FROM styleforge.data.illustration_metadata 
+      SELECT id, filename, caption, file_path
+      FROM styleforge.data.illustration_metadata
       WHERE project_id = '${id}'
       ORDER BY id
     `);
@@ -52,6 +52,7 @@ export async function GET(
         id: parseInt(row[0]),
         filename: row[1],
         caption: row[2],
+        file_path: row[3] || null,
       })) || [];
 
     return NextResponse.json({
@@ -71,6 +72,35 @@ export async function GET(
     console.error("Error loading project:", error);
     return NextResponse.json(
       { success: false, error: "Failed to load project" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+
+    // Delete child rows first (illustration metadata)
+    await databricksSQL(`
+      DELETE FROM styleforge.data.illustration_metadata
+      WHERE project_id = '${id}'
+    `);
+
+    // Delete the project
+    await databricksSQL(`
+      DELETE FROM styleforge.data.projects
+      WHERE project_id = '${id}'
+    `);
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting project:", error);
+    return NextResponse.json(
+      { success: false, error: "Failed to delete project" },
       { status: 500 }
     );
   }

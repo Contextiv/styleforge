@@ -16,6 +16,8 @@ export default function Home() {
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [creating, setCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function loadProjects() {
     try {
@@ -32,6 +34,27 @@ export default function Home() {
   useEffect(() => {
     loadProjects();
   }, []);
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/projects/${deleteTarget.project_id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProjects((prev) =>
+          prev.filter((p) => p.project_id !== deleteTarget.project_id)
+        );
+      }
+    } catch {
+      console.error("Failed to delete project");
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
+  }
 
   async function handleCreate() {
     if (!newName.trim()) return;
@@ -137,27 +160,70 @@ export default function Home() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {projects.map((project) => (
-              <Link
+              <div
                 key={project.project_id}
-                href={`/project/${project.project_id}`}
                 className="group bg-[#1a1a1a] border border-[#68899D]/20 rounded-lg p-5 hover:border-[#A9DFFF]/50 transition-colors"
               >
-                <h3 className="font-bold text-lg mb-1 group-hover:text-[#A9DFFF] transition-colors">
-                  {project.name}
-                </h3>
-                <p className="text-[#68899D] text-sm mb-3 line-clamp-2">
-                  {project.description || "No description"}
-                </p>
-                <div className="flex items-center gap-2 text-xs text-[#68899D]/60">
-                  <span className="bg-[#141414] px-2 py-1 rounded">
+                <Link href={`/project/${project.project_id}`} className="block">
+                  <h3 className="font-bold text-lg mb-1 group-hover:text-[#A9DFFF] transition-colors">
+                    {project.name}
+                  </h3>
+                  <p className="text-[#68899D] text-sm mb-3 line-clamp-2">
+                    {project.description || "No description"}
+                  </p>
+                </Link>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-[#68899D]/60 bg-[#141414] px-2 py-1 rounded">
                     {project.image_count} references
                   </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteTarget(project);
+                    }}
+                    className="px-2.5 py-1 text-xs text-[#68899D]/40 hover:text-red-400 border border-transparent hover:border-red-400/30 rounded transition-colors"
+                  >
+                    Delete
+                  </button>
                 </div>
-              </Link>
+              </div>
             ))}
           </div>
         )}
       </main>
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-[#1a1a1a] border border-[#68899D]/30 rounded-xl p-6 max-w-md mx-4">
+            <h3 className="text-lg font-bold mb-2">Delete Project</h3>
+            <p className="text-[#68899D] text-sm mb-6">
+              Are you sure you want to delete{" "}
+              <span className="text-white font-medium">
+                {deleteTarget.name}
+              </span>
+              ? This will permanently remove the project and all its reference
+              images.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="px-4 py-2 border border-[#68899D]/30 text-[#68899D] hover:text-white rounded-lg text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-red-500/50 rounded-lg text-sm font-medium transition-colors"
+              >
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="border-t border-[#68899D]/10 px-6 py-4 mt-20">
