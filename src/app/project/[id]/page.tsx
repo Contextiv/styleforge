@@ -14,6 +14,15 @@ type ProjectInfo = {
   replicate_training_id: string | null;
 };
 type ImageMeta = { id: number; filename: string; caption: string; file_path: string | null };
+type GalleryImage = {
+  id: number;
+  filename: string;
+  file_path: string;
+  original_prompt: string;
+  enhanced_prompt: string;
+  style_references: string;
+  generated_at: string;
+};
 
 // Animated status steps for long operations
 function StatusSteps({ steps, activeIndex }: { steps: string[]; activeIndex: number }) {
@@ -58,9 +67,12 @@ export default function ProjectPage() {
   const [result, setResult] = useState<{
     imageUrl: string | null;
     enhancedPrompt: string;
+    originalPrompt: string;
     styleReferences: StyleRef[];
   } | null>(null);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
 
   // Training state
   const [training, setTraining] = useState(false);
@@ -69,8 +81,16 @@ export default function ProjectPage() {
   const [trainingStatus, setTrainingStatus] = useState<string | null>(null);
   const [trainingLogs, setTrainingLogs] = useState("");
 
+  // Gallery state
+  const [galleryImages, setGalleryImages] = useState<GalleryImage[]>([]);
+  const [galleryLoaded, setGalleryLoaded] = useState(false);
+  const [loadingGallery, setLoadingGallery] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<GalleryImage | null>(null);
+  const [deletingGalleryImage, setDeletingGalleryImage] = useState(false);
+  const [galleryDeleteTarget, setGalleryDeleteTarget] = useState<GalleryImage | null>(null);
+
   // Active tab
-  const [tab, setTab] = useState<"references" | "generate">("references");
+  const [tab, setTab] = useState<"references" | "generate" | "gallery">("references");
 
   const loadProject = useCallback(async () => {
     try {
@@ -91,6 +111,33 @@ export default function ProjectPage() {
   useEffect(() => {
     loadProject();
   }, [loadProject]);
+
+  // Load gallery when tab is first selected
+  const loadGallery = useCallback(async () => {
+    setLoadingGallery(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/gallery`);
+      const data = await res.json();
+      if (data.success) {
+        setGalleryImages(data.images);
+        // Auto-select the most recent image
+        if (data.images.length > 0 && !selectedImage) {
+          setSelectedImage(data.images[0]);
+        }
+      }
+    } catch {
+      console.error("Failed to load gallery");
+    } finally {
+      setLoadingGallery(false);
+      setGalleryLoaded(true);
+    }
+  }, [projectId, selectedImage]);
+
+  useEffect(() => {
+    if (tab === "gallery" && !galleryLoaded) {
+      loadGallery();
+    }
+  }, [tab, galleryLoaded, loadGallery]);
 
   // Poll training status every 10 seconds when training is in progress
   useEffect(() => {
@@ -196,6 +243,7 @@ export default function ProjectPage() {
     setGenerateStep(0);
     setError("");
     setResult(null);
+    setSaveMessage("");
 
     // Animate through steps while the API call runs
     generateTimerRef.current = setInterval(() => {
@@ -214,6 +262,7 @@ export default function ProjectPage() {
         setResult({
           imageUrl: data.imageUrl,
           enhancedPrompt: data.enhancedPrompt,
+          originalPrompt: data.originalPrompt || prompt,
           styleReferences: data.styleReferences,
         });
       } else {
@@ -224,6 +273,87 @@ export default function ProjectPage() {
       setError("Something went wrong.");
     } finally {
       setGenerating(false);
+    }
+  }
+
+  async function handleSaveToGallery() {
+    if (!result?.imageUrl) return;
+    setSaving(true);
+    setSaveMessage("");
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}/gallery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageUrl: result.imageUrl,
+          originalPrompt: result.originalPrompt,
+          enhancedPrompt: result.enhancedPrompt,
+          styleReferences: result.styleReferences,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSaveMessage("Saved to Gallery!");
+        // Refresh gallery data on next visit
+        setGalleryLoaded(false);
+      } else {
+        setSaveMessage("Failed to save. Try again.");
+      }
+    } catch {
+      setSaveMessage("Something went wrong.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleDiscard() {
+    setResult(null);
+    setSaveMessage("");
+  }
+
+  async function handleGalleryDelete() {
+    if (!galleryDeleteTarget) return;
+    setDeletingGalleryImage(true);
+
+    try {
+      const res = await fetch(
+        `/api/projects/${projectId}/gallery?imageId=${galleryDeleteTarget.id}`,
+        { method: "DELETE" }
+      );
+      const data = await res.json();
+      if (data.success) {
+        setGalleryImages((prev) => prev.filter((img) => img.id !== galleryDeleteTarget.id));
+        if (selectedImage?.id === galleryDeleteTarget.id) {
+          const remaining = galleryImages.filter((img) => img.id !== galleryDeleteTarget.id);
+          setSelectedImage(remaining.length > 0 ? remaining[0] : null);
+        }
+      }
+    } catch {
+      console.error("Failed to delete gallery image");
+    } finally {
+      setDeletingGalleryImage(false);
+      setGalleryDeleteTarget(null);
+    }
+  }
+
+  function handleDownload() {
+    if (!selectedImage) return;
+    const url = `/api/projects/${projectId}/thumbnail?filename=${encodeURIComponent(selectedImage.filename)}&path=${encodeURIComponent(selectedImage.file_path)}`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = selectedImage.filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  // Parse style references from JSON string
+  function parseStyleRefs(refsStr: string): StyleRef[] {
+    try {
+      return JSON.parse(refsStr);
+    } catch {
+      return [];
     }
   }
 
@@ -252,7 +382,7 @@ export default function ProjectPage() {
             href="/"
             className="text-[#68899D] hover:text-[#A9DFFF] transition-colors text-sm"
           >
-            ← Projects
+            &larr; Projects
           </Link>
           <div>
             <h1 className="text-xl font-bold tracking-tight">
@@ -289,6 +419,16 @@ export default function ProjectPage() {
           >
             Generate
           </button>
+          <button
+            onClick={() => setTab("gallery")}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              tab === "gallery"
+                ? "bg-[#A9DFFF] text-[#141414]"
+                : "text-[#68899D] hover:text-white"
+            }`}
+          >
+            Gallery
+          </button>
         </div>
 
         {/* References Tab */}
@@ -311,7 +451,7 @@ export default function ProjectPage() {
                       Drop reference images here or click to upload
                     </p>
                     <p className="text-sm text-[#68899D]/50">
-                      JPG, PNG, or WebP — each image will be analyzed by AI
+                      JPG, PNG, or WebP &mdash; each image will be analyzed by AI
                     </p>
                   </div>
                 ) : (
@@ -482,7 +622,7 @@ export default function ProjectPage() {
               </div>
             ) : (
               <div className="mb-4 px-3 py-2 bg-[#68899D]/10 border border-[#68899D]/20 rounded-lg text-[#68899D] text-xs">
-                Using default model — train a custom model in the References tab for better results
+                Using default model &mdash; train a custom model in the References tab for better results
               </div>
             )}
 
@@ -559,6 +699,31 @@ export default function ProjectPage() {
                       </div>
                     )}
 
+                    {/* Save / Discard buttons */}
+                    {result.imageUrl && (
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={handleSaveToGallery}
+                          disabled={saving || saveMessage === "Saved to Gallery!"}
+                          className="px-5 py-2.5 bg-[#A9DFFF] text-[#141414] hover:bg-[#A9DFFF]/80 disabled:bg-[#68899D]/20 disabled:text-[#68899D]/50 rounded-lg font-medium transition-colors text-sm"
+                        >
+                          {saving ? "Saving..." : saveMessage === "Saved to Gallery!" ? "Saved!" : "Save to Gallery"}
+                        </button>
+                        <button
+                          onClick={handleDiscard}
+                          className="px-5 py-2.5 border border-[#68899D]/30 text-[#68899D] hover:text-white hover:border-[#68899D]/60 rounded-lg text-sm font-medium transition-colors"
+                        >
+                          Discard
+                        </button>
+                        {saveMessage && saveMessage !== "Saved to Gallery!" && (
+                          <span className="text-[#FF50AD] text-sm">{saveMessage}</span>
+                        )}
+                        {saveMessage === "Saved to Gallery!" && (
+                          <span className="text-green-400 text-sm">{saveMessage}</span>
+                        )}
+                      </div>
+                    )}
+
                     <div className="bg-[#1a1a1a] rounded-lg p-5 border border-[#68899D]/20">
                       <h3 className="text-xs font-medium text-[#A9DFFF] mb-2 uppercase tracking-wider">
                         Enhanced Prompt
@@ -594,11 +759,170 @@ export default function ProjectPage() {
             )}
           </div>
         )}
+
+        {/* Gallery Tab */}
+        {tab === "gallery" && (
+          <div>
+            {loadingGallery ? (
+              <div className="text-center py-16">
+                <div className="inline-block w-10 h-10 border-4 border-[#68899D]/30 border-t-[#A9DFFF] rounded-full animate-spin"></div>
+              </div>
+            ) : galleryImages.length === 0 ? (
+              <div className="text-center py-16">
+                <p className="text-[#68899D] mb-4">
+                  No saved images yet. Generate concepts and save your favorites.
+                </p>
+                <button
+                  onClick={() => setTab("generate")}
+                  className="px-5 py-2 bg-[#FF50AD] hover:bg-[#FF88A1] rounded-lg font-medium text-sm transition-colors"
+                >
+                  Go to Generate
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-6" style={{ minHeight: "calc(100vh - 300px)" }}>
+                {/* Left panel — Thumbnail grid (40%) */}
+                <div className="w-[40%] overflow-y-auto pr-2" style={{ maxHeight: "calc(100vh - 300px)" }}>
+                  <div className="grid grid-cols-3 gap-2">
+                    {galleryImages.map((img) => (
+                      <button
+                        key={img.id}
+                        onClick={() => setSelectedImage(img)}
+                        className={`aspect-square rounded-lg overflow-hidden border-2 transition-colors ${
+                          selectedImage?.id === img.id
+                            ? "border-[#A9DFFF]"
+                            : "border-transparent hover:border-[#68899D]/40"
+                        }`}
+                      >
+                        <img
+                          src={`/api/projects/${projectId}/thumbnail?filename=${encodeURIComponent(img.filename)}&path=${encodeURIComponent(img.file_path)}`}
+                          alt={img.original_prompt}
+                          className="w-full h-full object-cover"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right panel — Detail view (60%) */}
+                <div className="w-[60%] overflow-y-auto" style={{ maxHeight: "calc(100vh - 300px)" }}>
+                  {selectedImage ? (
+                    <div className="space-y-4">
+                      {/* Full-size image */}
+                      <div className="rounded-xl overflow-hidden border border-[#68899D]/20">
+                        <img
+                          src={`/api/projects/${projectId}/thumbnail?filename=${encodeURIComponent(selectedImage.filename)}&path=${encodeURIComponent(selectedImage.file_path)}`}
+                          alt={selectedImage.original_prompt}
+                          className="w-full"
+                        />
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={handleDownload}
+                          className="px-4 py-2 bg-[#A9DFFF] text-[#141414] hover:bg-[#A9DFFF]/80 rounded-lg font-medium text-sm transition-colors"
+                        >
+                          Download
+                        </button>
+                        <button
+                          onClick={() => setGalleryDeleteTarget(selectedImage)}
+                          className="px-4 py-2 border border-red-400/30 text-red-400 hover:bg-red-400/10 rounded-lg text-sm font-medium transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+
+                      {/* Original prompt */}
+                      <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#68899D]/20">
+                        <h3 className="text-xs font-medium text-[#A9DFFF] mb-2 uppercase tracking-wider">
+                          Original Prompt
+                        </h3>
+                        <p className="text-white text-sm leading-relaxed">
+                          {selectedImage.original_prompt}
+                        </p>
+                      </div>
+
+                      {/* Enhanced prompt */}
+                      <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#68899D]/20">
+                        <h3 className="text-xs font-medium text-[#A9DFFF] mb-2 uppercase tracking-wider">
+                          Enhanced Prompt
+                        </h3>
+                        <p className="text-[#68899D] text-sm leading-relaxed">
+                          {selectedImage.enhanced_prompt}
+                        </p>
+                      </div>
+
+                      {/* Matched references */}
+                      {parseStyleRefs(selectedImage.style_references).length > 0 && (
+                        <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[#68899D]/20">
+                          <h3 className="text-xs font-medium text-[#A9DFFF] mb-3 uppercase tracking-wider">
+                            Matched References
+                          </h3>
+                          {parseStyleRefs(selectedImage.style_references).map((ref, i) => (
+                            <div
+                              key={i}
+                              className="py-2 border-t border-[#68899D]/10 first:border-0"
+                            >
+                              <p className="text-[#FF50AD] text-sm font-medium">
+                                {ref.filename}
+                              </p>
+                              <p className="text-[#68899D] text-sm mt-1">
+                                {ref.caption}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Timestamp */}
+                      <p className="text-xs text-[#68899D]/50">
+                        Generated {selectedImage.generated_at}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-[#68899D]">
+                      Select an image to view details
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </main>
+
+      {/* Gallery Delete Confirmation Modal */}
+      {galleryDeleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-[#1a1a1a] border border-[#68899D]/30 rounded-xl p-6 max-w-md mx-4">
+            <h3 className="text-lg font-bold mb-2">Delete Image</h3>
+            <p className="text-[#68899D] text-sm mb-6">
+              Are you sure you want to delete this generated image? This will permanently remove the image and its metadata.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setGalleryDeleteTarget(null)}
+                disabled={deletingGalleryImage}
+                className="px-4 py-2 border border-[#68899D]/30 text-[#68899D] hover:text-white rounded-lg text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleGalleryDelete}
+                disabled={deletingGalleryImage}
+                className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-red-500/50 rounded-lg text-sm font-medium transition-colors"
+              >
+                {deletingGalleryImage ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <footer className="border-t border-[#68899D]/10 px-6 py-4 mt-20">
         <p className="text-xs text-[#68899D]/50 text-center">
-          © 2025 Contextiv LLC. All rights reserved.
+          &copy; 2025 Contextiv LLC. All rights reserved.
         </p>
       </footer>
     </div>
