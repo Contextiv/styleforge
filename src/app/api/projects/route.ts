@@ -22,12 +22,12 @@ async function databricksSQL(statement: string) {
 export async function GET() {
   try {
     const result = await databricksSQL(`
-      SELECT p.project_id, p.name, p.description, 
-             COUNT(m.id) as image_count
+      SELECT p.project_id, p.name, p.description,
+             COUNT(m.id) as image_count, p.training_status
       FROM styleforge.data.projects p
-      LEFT JOIN styleforge.data.illustration_metadata m 
+      LEFT JOIN styleforge.data.illustration_metadata m
         ON p.project_id = m.project_id
-      GROUP BY p.project_id, p.name, p.description
+      GROUP BY p.project_id, p.name, p.description, p.training_status
       ORDER BY p.name
     `);
 
@@ -38,6 +38,7 @@ export async function GET() {
         name: row[1],
         description: row[2],
         image_count: parseInt(row[3]) || 0,
+        training_status: row[4] || null,
       })) || [];
 
     return NextResponse.json({ success: true, projects });
